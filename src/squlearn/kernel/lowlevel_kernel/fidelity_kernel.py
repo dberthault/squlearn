@@ -370,7 +370,7 @@ class FidelityKernel(KernelMatrixBase):
                     caching=self._caching,
                 )
             else:
-                if self._executor.quantum_framework in ["pennylane", "qulacs"]:
+                if self._executor.quantum_framework in ["pennylane", "qulacs", "qoqo"]:
 
                     self._quantum_kernel = FidelityKernelStatevector(
                         encoding_circuit=self._encoding_circuit,

@@ -560,6 +560,8 @@ class Executor:
                     shots = self._pennylane_device.shots.total_shots
             elif execution in ["qulacs"]:
                 self._quantum_framework = "qulacs"
+            elif execution in ["qoqo", "quest"]:
+                self._quantum_framework = "qoqo"
             else:
                 raise ValueError("Unknown backend string: " + execution)
             self._execution_origin = "Simulator"
@@ -680,6 +682,10 @@ class Executor:
         elif self.quantum_framework == "qulacs":
             self._qc_executor = QcExecutorFactory.create(
                 "qulacs", shots=shots, seed=self._set_seed_for_primitive
+            )
+        elif self.quantum_framework == "qoqo":
+            self._qc_executor = QcExecutorFactory.create(
+                "qoqo", shots=shots, seed=self._set_seed_for_primitive
             )
         else:
             raise RuntimeError("Unknown quantum framework!")
@@ -824,6 +830,8 @@ class Executor:
             return self._pennylane_device
         elif self.quantum_framework == "qulacs":
             return None
+        elif self.quantum_framework == "qoqo":
+            return None
         else:
             raise RuntimeError("Unknown quantum framework!")
 
@@ -848,6 +856,8 @@ class Executor:
                 ]
             )
         elif self.quantum_framework == "qulacs":
+            return False
+        elif self.quantum_framework == "qoqo":
             return False
         else:
             raise RuntimeError("Unknown quantum framework!")
@@ -1482,6 +1492,59 @@ class Executor:
         """
         return self._qc_executor.statevector(circuit, **parameters)
 
+    def density_matrix(self, circuit, **parameters):
+        """Compute the density matrix of *circuit* directly through the
+        underlying ``qc_executor`` instance.
+
+        Only supported by the qoqo (QuEST) framework; with a noise model
+        loaded via :meth:`load_noise_model` the noise is inserted into the
+        circuit before the evaluation.
+        """
+        if not hasattr(self._qc_executor, "density_matrix"):
+            raise RuntimeError("Density matrix is only available for the qoqo framework")
+        return self._qc_executor.density_matrix(circuit, **parameters)
+
+    def load_noise_model(self, noise_model, backend=None) -> None:
+        """Load a qiskit-aer noise model that is applied to every circuit evaluation.
+
+        Only supported by the qoqo (QuEST) quantum framework. The noise model
+        is converted into qoqo noise pragmas that are inserted into the circuit
+        before the evaluation. The backend is required, since the noise
+        insertion needs the gate set and gate times of the device the noise
+        model was created from (e.g. via ``NoiseModel.from_backend(backend)``).
+
+        Args:
+            noise_model (Union[NoiseModel, None]): qiskit-aer noise model to
+                be applied to every circuit evaluation, or None to disable noise.
+            backend (Union[Backend, None]): qiskit backend the noise model was
+                created from. Required if a noise model is given.
+
+        Raises:
+            RuntimeError: If the quantum framework is not qoqo.
+            RuntimeError: If a noise model is given without a backend.
+        """
+        if self.quantum_framework != "qoqo":
+            raise RuntimeError("Noise models are only supported for the qoqo quantum framework.")
+        if not hasattr(self._qc_executor, "load_noise_model"):
+            raise RuntimeError(
+                "The underlying qc_executor qoqo backend does not support noise models."
+            )
+        self._qc_executor.load_noise_model(noise_model, backend)
+
+    @property
+    def noise_model(self):
+        """The qiskit-aer noise model applied to the circuit evaluations, or None."""
+        if self.quantum_framework != "qoqo":
+            return None
+        return getattr(self._qc_executor, "noise_model", None)
+
+    @property
+    def noise_backend(self):
+        """The qiskit backend of the noise model, or None."""
+        if self.quantum_framework != "qoqo":
+            return None
+        return getattr(self._qc_executor, "noise_backend", None)
+
     def probabilities(self, circuit, *, cutoff: float = 0.0, **parameters):
         """Compute the measurement probabilities of *circuit* directly
         through the underlying ``qc_executor`` instance.
@@ -1513,6 +1576,11 @@ class Executor:
                 self._qc_executor.shots = None
 
         elif self.quantum_framework == "pennylane":
+
+            if self._qc_executor is not None:
+                self._qc_executor.shots = self._shots
+
+        elif self.quantum_framework == "qoqo":
 
             if self._qc_executor is not None:
                 self._qc_executor.shots = self._shots
@@ -1556,6 +1624,10 @@ class Executor:
             shots = self._qc_executor.shots if self._qc_executor is not None else None
 
         elif self.quantum_framework == "pennylane":
+
+            shots = self._qc_executor.shots if self._qc_executor is not None else None
+
+        elif self.quantum_framework == "qoqo":
 
             shots = self._qc_executor.shots if self._qc_executor is not None else None
 
@@ -1901,6 +1973,8 @@ class Executor:
                 ]
             )
         elif self.quantum_framework == "qulacs":
+            return True
+        elif self.quantum_framework == "qoqo":
             return True
         else:
             raise RuntimeError("Unknown quantum framework!")

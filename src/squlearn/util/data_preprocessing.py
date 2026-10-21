@@ -2,6 +2,7 @@ from typing import Union
 
 import numpy as np
 
+from qiskit.circuit import ParameterVector
 from qc_executor import Parameters
 from qc_executor.utils.data_preprocessing import (
     _adjust_input,
@@ -21,7 +22,7 @@ __all__ = [
 ]
 
 
-def extract_num_features(X: Union[np.ndarray, Parameters, list]) -> int:
+def extract_num_features(X: Union[np.ndarray, Parameters, list, ParameterVector]) -> int:
     """Extract the number of features from the input array."""
     if isinstance(X, list):
         X = np.array(X)
@@ -32,5 +33,7 @@ def extract_num_features(X: Union[np.ndarray, Parameters, list]) -> int:
             return X.shape[1]
     if isinstance(X, Parameters):
         return len(X)
+    if isinstance(X, ParameterVector):
+        return len(X)
 
-    raise TypeError("Unsupported type for X")
+    raise TypeError(f"Unsupported type for {X}")

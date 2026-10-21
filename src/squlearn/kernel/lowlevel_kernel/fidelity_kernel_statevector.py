@@ -45,7 +45,7 @@ class FidelityKernelStatevector:
         self._num_features = num_features
         self._parameters = None
 
-        if self._executor.quantum_framework not in ["pennylane", "qulacs"]:
+        if self._executor.quantum_framework not in ["pennylane", "qulacs", "qoqo"]:
             raise NotImplementedError(
                 "FidelityKernelStatevector is not supported for this quantum framework:",
                 self._executor.quantum_framework,
@@ -55,6 +55,8 @@ class FidelityKernelStatevector:
 
             # Mode 1 for statevector: calculate the statevector of the quantum circuit
             # and use it to calculate the fidelity as the overlap of the two states.
+            # With a loaded noise model (qoqo), the executor returns density matrices
+            # instead; the overlap is then Tr(rho_x @ rho_y).
 
             x = Parameters("x", self._num_features)
             if self.num_parameters > 0:
@@ -92,6 +94,10 @@ class FidelityKernelStatevector:
                 raise NotImplementedError(
                     "Shot based fidelity kernel is not implemented for Qulacs yet."
                 )
+            elif self._executor.quantum_framework == "qoqo":
+                raise NotImplementedError(
+                    "Shot based fidelity kernel is not implemented for qoqo yet."
+                )
             else:
                 raise RuntimeError(
                     "Quantum framework not supported for FidelityKernelStatevector: "
@@ -106,6 +112,10 @@ class FidelityKernelStatevector:
         object rather than from the executor's framework, so it survives being
         deserialized onto a different backend executor (see
         :meth:`__getstate__`/:meth:`__setstate__`).
+
+        For the qoqo framework with a loaded noise model, the executor
+        evaluates density matrices instead of statevectors (noise turns the
+        simulation non-unitary); the kernel entry is then ``Tr(rho_x rho_y)``.
         """
         if not self._executor.is_statevector:
             return
@@ -113,19 +123,33 @@ class FidelityKernelStatevector:
         if getattr(self, "_native_circuit", None) is None:
             return
 
+        # Rebuild whenever the noise status changed since the last build:
+        # load_noise_model(None) on the executor switches the result type
+        # back from density matrices to statevectors (and vice versa), and a
+        # stale closure would produce matrices where vectors are expected.
+        noise_active = (
+            self._executor.quantum_framework == "qoqo" and self._executor.noise_model is not None
+        )
+        if getattr(self, "_cached_execution_noise_active", None) == noise_active:
+            return
+
+        if noise_active:
+            evaluate = self._executor.density_matrix
+        else:
+            evaluate = self._executor.statevector
+
         @lru_cache(maxsize=self._cache_size)
         def native_circuit_executor(*args):
             args_numpy = [np.array(arg) for arg in args]
             if len(args_numpy) == 0:
-                return self._executor.statevector(self._native_circuit)
+                return evaluate(self._native_circuit)
             elif len(args_numpy) == 1:
-                return self._executor.statevector(self._native_circuit, x=args_numpy[0])
+                return evaluate(self._native_circuit, x=args_numpy[0])
             elif len(args_numpy) == 2:
-                return self._executor.statevector(
-                    self._native_circuit, p=args_numpy[0], x=args_numpy[1]
-                )
+                return evaluate(self._native_circuit, p=args_numpy[0], x=args_numpy[1])
 
         self._cached_execution = native_circuit_executor
+        self._cached_execution_noise_active = noise_active
 
     def __getstate__(self) -> dict:
         """Return a picklable copy of the kernel's state.
@@ -313,10 +337,25 @@ class FidelityKernelStatevector:
         self._executor.set_shots(None)
         is_symmetric = np.array_equal(x, y)
 
+        # Refresh the cached execution closure: it is a no-op unless the
+        # executor's noise status changed since the last build (e.g. the user
+        # called load_noise_model on the executor between two evaluate calls).
+        self._build_cached_execution()
+
+        # With a qoqo noise model the cached execution returns density
+        # matrices; the kernel entry is the Hilbert-Schmidt overlap
+        # Tr(rho_x rho_y) instead of the pure-state overlap |<x|y>|^2.
+        is_noisy_density_matrix = (
+            self._executor.quantum_framework == "qoqo" and self._executor.noise_model is not None
+        )
+
         def get_kernel_entry(x: np.ndarray, y: np.ndarray) -> float:
             """Compute the kernel entry based on the overlap x and y."""
-            # Calculate overlap between statevector x and y
-            overlap = np.abs(np.matmul(x.conj(), y)) ** 2
+            if is_noisy_density_matrix:
+                overlap = np.real(np.trace(x @ y))
+            else:
+                # Calculate overlap between statevector x and y
+                overlap = np.abs(np.matmul(x.conj(), y)) ** 2
             # If shots are set, draw from the binomial distribution
             if shots is not None and shots > 1:
                 overlap = algorithm_globals.random.binomial(n=shots, p=overlap) / shots
@@ -326,7 +365,7 @@ class FidelityKernelStatevector:
         x_inp, _ = adjust_features(x, self._num_features)
         y_inp, _ = adjust_features(y, self._num_features)
 
-        if self._executor.quantum_framework in ("pennylane", "qulacs"):
+        if self._executor.quantum_framework in ("pennylane", "qulacs", "qoqo"):
 
             if self._parameter_vector is not None:
                 if self._parameters is None:

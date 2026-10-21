@@ -19,15 +19,17 @@ from ...util.data_preprocessing import adjust_features, adjust_parameters, to_tu
 from .evaluation_classes import eval_var, eval_dvardx, eval_dvardp, eval_dvardop, get_eval_laplace
 
 # Frameworks for which Executor.expectation_value/expectation_value_derivatives
-# (and therefore evaluation) are available.
-_NATIVE_FRAMEWORKS = frozenset({"qiskit", "pennylane", "qulacs"})
+# (and therefore evaluation) are available. The qoqo (QuEST) backend supports the
+# plain expectation value (including a noise model loaded via
+# Executor.load_noise_model) but no derivatives yet.
+_NATIVE_FRAMEWORKS = frozenset({"qiskit", "pennylane", "qulacs", "qoqo"})
 
 # Frameworks whose qc_executor backend cannot bind a shared "p_op" vector across a
 # List[QuantumOperatorBase] where each entry only owns a different slice of it: they require
 # the array passed under a vector-style key to match that *specific* observable's own
 # parameter count exactly, not the length of the full, shared vector. Qiskit's backend
 # handles the list natively and is left on the faster, single-call path.
-_LIST_OBSERVABLE_NEEDS_PER_OBSERVABLE_CALLS = frozenset({"pennylane", "qulacs"})
+_LIST_OBSERVABLE_NEEDS_PER_OBSERVABLE_CALLS = frozenset({"pennylane", "qulacs", "qoqo"})
 
 # Maps every native key to the observable attribute it is measured against and the
 # qc_executor derivative parameter it needs ("x"/"p"/"p_op", or None for the plain
@@ -163,7 +165,9 @@ class LowLevelQNN:
     (``var``/``dvardx``/``dvardp``/``dvardop``). For Qiskit and PennyLane, arbitrary chained
     higher-order derivatives (e.g. ``dfdxdx``, ``laplace``) are supported as well; for Qiskit,
     derivatives can additionally be requested directly by parameter identity (e.g.
-    ``llqnn.parameters[0]``). Qulacs supports the base key set without chained derivatives.
+    ``llqnn.parameters[0]``). Qulacs and qoqo support the base key set (``f``, ``fcc`` and
+    their first derivatives plus the ``var`` family) without chained derivatives; qoqo does
+    not support derivative keys yet, only ``f``/``fcc`` and the ``var`` family.
     Any unsupported key combination raises ``NotImplementedError``.
 
     Args:
